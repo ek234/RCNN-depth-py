@@ -60,7 +60,7 @@ def getHHA(C, D, RD):
 
 if __name__ == "__main__":
     D = getImage()
-    camera_matrix = getCameraParam('depth')
+    camera_matrix = getCameraParam('color')
     print('max gray value: ', np.max(D))        # make sure that the image is in 'meter'
     # hha = getHHA(camera_matrix, D, RD)
     hha_complete = getHHA(camera_matrix, D, D)
