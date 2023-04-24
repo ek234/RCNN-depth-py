@@ -12,7 +12,7 @@ data = {i: {"X": [], "Y": []} for i in flat}
 count = 0
 
 def compute_xy(i):
-    return get_features_from_filename(f"i")
+    return get_features_from_filename(f"{i}")
 
 def run_code(arr):
     global count
