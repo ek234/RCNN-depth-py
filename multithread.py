@@ -1,8 +1,8 @@
 import concurrent.futures
 import pickle
+from region_proposal.utils.extract_features import get_features_from_filename
 
 NUM_WORKERS = 4
-
 
 pool = concurrent.futures.ThreadPoolExecutor(max_workers=4)
 img_arr = [[3], [5], [6], [2]]
@@ -12,7 +12,7 @@ data = {i: {"X": [], "Y": []} for i in flat}
 count = 0
 
 def compute_xy(i):
-    return f"X_{i}", f"Y_{i}"
+    return get_features_from_filename(f"i")
 
 def run_code(arr):
     global count
