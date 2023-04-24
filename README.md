@@ -3,5 +3,8 @@
 ## Geocentric encoding
 `python getHHA.py`
 
+## Dataset
+https://drive.google.com/file/d/1YFPXk6EvdhwYZZ9vLRLBbkmBpym6AzXA/view?usp=sharing 
+
 ## Resources
 - HHA: https://github.com/charlesCXK/Depth2HHA-python.git <br />
