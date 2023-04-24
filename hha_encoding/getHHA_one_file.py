@@ -3,16 +3,19 @@ import math
 import cv2
 import os
 import math
-
+from numpy import asarray
+from numpy import save
 from utils_hha.rgbd_util import *
 from utils_hha.getCameraParam import *
 
 '''
 must use 'COLOR_BGR2GRAY' here, or you will get a different gray-value with what MATLAB gets.
 '''
-def getImage(root='.'):
-    D = cv2.imread(os.path.join(root, '2.png'), cv2.COLOR_BGR2GRAY)/10000
-#    RD = cv2.imread(os.path.join(root, '0_raw.png'), cv2.COLOR_BGR2GRAY)/10000
+def getImage():
+    # D = cv2.imread(os.path.join(root, 'depth_00001.png'), cv2.COLOR_BGR2GRAY)/10000
+    # RD = cv2.imread(os.path.join(root, '0_raw.png'), cv2.COLOR_BGR2GRAY)/10000
+    
+    D = np.load(os.path.join('../nyudv2/depth', '9.npy'))
     return D
 
 '''
@@ -65,23 +68,8 @@ if __name__ == "__main__":
     # hha = getHHA(camera_matrix, D, RD)
     hha_complete = getHHA(camera_matrix, D, D)
     # cv2.imwrite('demo/hha.png', hha)
-    cv2.imwrite('./hha_complete.png', hha_complete)
+    # cv2.imwrite('./hha_complete.png', hha_complete)
     
-    
-    ''' multi-peocessing example '''
-    '''
-    from multiprocessing import Pool
-    
-    def generate_hha(i):
-        # generate hha for the i-th image
-        return
-    
-    processNum = 16
-    pool = Pool(processNum)
+    # save to npy file
+    save('data.npy', hha_complete)
 
-    for i in range(img_num):
-        print(i)
-        pool.apply_async(generate_hha, args=(i,))
-        pool.close()
-        pool.join()
-    ''' 
