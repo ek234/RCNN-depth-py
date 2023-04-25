@@ -66,7 +66,6 @@ def plot_selected_regions ( image, regions_supressed, Y_supressed ) :
     _, subplts = plt.subplots(int(np.ceil(np.sum(Y_supressed!=0)/pics_per_row)), pics_per_row, figsize=(20, 20))
     for subplt in subplts.flatten() :
         subplt.axis('off')
-    plt.tight_layout()
 
     for idx, ids in enumerate(np.argwhere(Y_supressed != 0).flatten()) :
         x, y, w, h = regions_supressed[ids]
