@@ -4,8 +4,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from utils.plot_stuff import plot_images, plot_hha_components, plot_angle_directions, plot_masks, showSeSeBBoxes, plot_selected_regions
 
-MIN_SIMILARITY_WITH_GT_REGION = 0.5
-MIN_SIMILARITY_WITH_NEIGHBOR_BBOX = 0.5
+MIN_SIMILARITY_SCORE = 0.5 # Minimum score needed to be considered not garbage
+MIN_SIMILARITY_WITH_NEIGHBOR_BBOX = 0.5 # Minimum score needed to be considered the same as a neighbor region
 NeedFastSeSe = False
 
 
@@ -44,9 +44,6 @@ def getCameraParams ( isColor: bool ) :
 def getImages ( img_name: str, root_dir: str = "../nyudv2", print_info: bool = False ) :
     start = time.time()
 
-    # image = cv2.imread(f"{root_dir}/rgb_{img_name}.png")
-    # image_depth = np.mean(cv2.imread(f"{root_dir}/depth_{img_name}.png"), axis=2)
-    # image_labelmaps = cv2.imread(f"{root_dir}/label_maps_{img_name}.png")
     image = np.load(f"{root_dir}/rgb/{img_name}.npy")
     image_depth = np.load(f"{root_dir}/depth/{img_name}.npy")
     image_labelmaps = np.load(f"{root_dir}/label/{img_name}.npy")
@@ -66,17 +63,27 @@ def getImages ( img_name: str, root_dir: str = "../nyudv2", print_info: bool = F
     image_labinsts = np.concatenate((image_labelmaps[:, :, np.newaxis], image_instmaps[:, :, np.newaxis]), axis=-1)
     fg_linsts = np.array(list({ (l,i) for l, i in image_labinsts.reshape(-1, 2) if l != 0 and i != 0 })) # 0 is background (boundaries, etc)
 
-    allmasks, am_label, am_instance, am_area = list(), list(), list(), list()
+    allmasks, am_label, am_instance, am_bbox = list(), list(), list(), list()
     for label, inst in fg_linsts :
         mask = (image_labinsts[:, :, 0] == label) & (image_labinsts[:, :, 1] == inst)
         allmasks.append(mask)
         am_label.append(label)
         am_instance.append(inst)
-        am_area.append(np.sum(mask))
+        xmin, xmax, ymin, ymax = mask.shape[1], 0, mask.shape[0], 0
+        for y in range(mask.shape[0]) :
+            for x in range(mask.shape[1]) :
+                if mask[y, x] :
+                    ymin = min(ymin, y)
+                    ymax = max(ymax, y)
+                    xmin = min(xmin, x)
+                    xmax = max(xmax, x)
+        assert ymin <= ymax
+        assert xmin <= xmax
+        am_bbox.append(( xmin, ymin, xmax-xmin, ymax-ymin ))
     allmasks = np.array(allmasks)
     am_label = np.array(am_label)
     am_instance = np.array(am_instance)
-    am_area = np.array(am_area)
+    am_bbox = np.array(am_bbox)
 
     if print_info :
         unilm = np.unique(image_labelmaps)
@@ -85,7 +92,7 @@ def getImages ( img_name: str, root_dir: str = "../nyudv2", print_info: bool = F
         print(f"[INFO] all images loaded in {time.time() - start:.4f}s")
 
     # ensure all of these are np arrays
-    return image, image_depth, image_hha, image_xyz, image_labinsts, allmasks, am_label, am_instance, am_area
+    return image, image_depth, image_hha, image_xyz, image_labinsts, allmasks, am_label, am_instance, am_bbox
 
 
 def performSeSe ( image, image_hha, print_info=False ) :
@@ -126,23 +133,6 @@ def performSeSe ( image, image_hha, print_info=False ) :
 		print(f"[INFO] total number of region proposals: {len(bboxes)}")
 		print(f"[INFO] basic region proposal took {time.time()-start:.4f} seconds")
 	return bboxes
-
-
-def ground_truth_region_label ( bbox_labinsts, bbox_masks, am_label, am_instance, am_area ) :
-    best_class, best_score = 0, MIN_SIMILARITY_WITH_GT_REGION
-    labels_in_question = np.unique(bbox_labinsts[:, :, 0])
-    insts_in_question = np.unique(bbox_labinsts[:, :, 1])
-    w, h = bbox_masks.shape[1:]
-
-    for label, inst, area, mask_region in zip(am_label, am_instance, am_area, bbox_masks) :
-        if label not in labels_in_question or inst not in insts_in_question :
-            continue
-        intersection_area = np.sum(mask_region) # TODO : can be made faster by saving the tight bounding box of the mask and only checking that area
-        # TODO : check if it could be better to calculate the intersection between bounding box and tight bounding box of mask
-        sim = intersection_area / ( area + w*h - intersection_area ) # using jaccard similarity as per the paper
-        if sim > best_score :
-            best_score, best_class = sim, label
-    return best_class, best_score
 
 
 def bb_jaccardsimilarity ( bb1, bb2 ) :
@@ -162,11 +152,27 @@ def bb_jaccardsimilarity ( bb1, bb2 ) :
     return iou
 
 
-def supress_non_maximal_boxes ( rects, image_labinsts, allmasks, am_label, am_instance, am_area, print_info=False ) :
+def ground_truth_region_label ( query_bbox, bbox_labinsts, am_label, am_instance, am_bbox ) :
+    best_class, best_score = 0, 0
+    labels_in_question = np.unique(bbox_labinsts[:, :, 0])
+    insts_in_question = np.unique(bbox_labinsts[:, :, 1])
+
+    for label, inst, bbox in zip(am_label, am_instance, am_bbox) :
+        if label not in labels_in_question or inst not in insts_in_question :
+            # TODO : rather than iterating through all possible l,i and
+            # checking if that combo is present in this region, do vice versa
+            continue
+        sim = bb_jaccardsimilarity(bbox, query_bbox)
+        if sim > best_score :
+            best_score, best_class = sim, label
+    return best_class, best_score
+
+
+def supress_non_maximal_boxes ( rects, image_labinsts, am_label, am_instance, am_bbox, print_info=False ) :
     start = time.time()
     data_unsupressed = list()
     for (x, y, w, h) in rects :
-        gt_label, gt_score = ground_truth_region_label(image_labinsts[y:y+h, x:x+w], allmasks[:, y:y+h, x:x+w], am_label, am_instance, am_area)
+        gt_label, gt_score = ground_truth_region_label((x,y,w,h), image_labinsts[y:y+h, x:x+w], am_label, am_instance, am_bbox)
         data_unsupressed.append((x, y, w, h, gt_label, gt_score))
     data_unsupressed = np.asanyarray(data_unsupressed)
     sorting_order = data_unsupressed[:, -1].argsort()[::-1]
@@ -202,8 +208,11 @@ def supress_non_maximal_boxes ( rects, image_labinsts, allmasks, am_label, am_in
 
 def extract_features ( image, image_depth, image_hha, image_xyz, regions_supressed, labels_supressed, scores_supressed, print_info: bool = False ) :
     start = time.time()
+
+    labels_filtered = np.where( scores_supressed < MIN_SIMILARITY_SCORE, 0, labels_supressed )
+
     X_supressed, Y_supressed = list(), list()
-    for (x, y, w, h), gt_label, gt_score in zip(regions_supressed, labels_supressed, scores_supressed) :
+    for (x, y, w, h), gt_label, gt_score, raw_label in zip(regions_supressed, labels_filtered, scores_supressed, labels_supressed) :
         proposed_box_rgb = image[y:y+h, x:x+w]
         proposed_box_depth = image_depth[y:y+h, x:x+w]
         proposed_box_angle = image_hha[y:y+h, x:x+w][:, :, 0]
@@ -240,8 +249,8 @@ def extract_features ( image, image_depth, image_hha, image_xyz, regions_supress
         r_mean_sd = np.mean(proposed_box_rgb[:, :, 0]), np.std(proposed_box_rgb[:, :, 0])
         g_mean_sd = np.mean(proposed_box_rgb[:, :, 1]), np.std(proposed_box_rgb[:, :, 1])
         b_mean_sd = np.mean(proposed_box_rgb[:, :, 2]), np.std(proposed_box_rgb[:, :, 2])
-
-        features = [ gt_score,x,y,w,h, *depth_mean_sd, *height_mean_sd, *angle_mean_sd, *disparity_mean_sd, *x_mean_sd, *y_mean_sd, *z_mean_sd, extent_x, extent_y, extent_z, min_height, max_height, frac_facing_down, frac_facing_horiz, frac_facing_up, area, perimeter, *location, aspect_ratio, *r_mean_sd, *g_mean_sd, *b_mean_sd ]
+        
+        features = [ raw_label,gt_score,x,y,w,h, *depth_mean_sd, *height_mean_sd, *angle_mean_sd, *disparity_mean_sd, *x_mean_sd, *y_mean_sd, *z_mean_sd, extent_x, extent_y, extent_z, min_height, max_height, frac_facing_down, frac_facing_horiz, frac_facing_up, area, perimeter, *location, aspect_ratio, *r_mean_sd, *g_mean_sd, *b_mean_sd ]
         # NOTE : remove gt_score,x,y,w,h from features before training
         X_supressed.append(features)
         Y_supressed.append(gt_label)
@@ -250,19 +259,19 @@ def extract_features ( image, image_depth, image_hha, image_xyz, regions_supress
     
     if print_info :
         print("[INFO] classes and their counts:")
-        print(np.asanyarray(np.unique(labels_supressed, return_counts=True)).T)
-        print("[INFO] number of classes excluding background : ", len(np.unique(labels_supressed[labels_supressed!=0])))
+        print(np.asanyarray(np.unique(Y_supressed, return_counts=True)).T)
+        print("[INFO] number of classes excluding background : ", len(np.unique(Y_supressed[Y_supressed!=0])))
         print(f"[INFO] feature extraction took {time.time()-start:.4f} seconds")
     return X_supressed, Y_supressed
 
 
 def get_features_from_filename ( imgnumber, print_plots=False, print_info=False ) :
     tic = time.time()
-    image, image_depth, image_hha, image_xyz, image_labinsts, allmasks, am_label, am_instance, am_area = getImages(imgnumber, print_info=print_info)
+    image, image_depth, image_hha, image_xyz, image_labinsts, allmasks, am_label, am_instance, am_bbox = getImages(imgnumber, print_info=print_info)
     if print_plots :
         plot_masks(allmasks, am_label, am_instance)
     allbboxes = performSeSe(image, image_hha, print_info=print_info)
-    bboxes, labels, scores = supress_non_maximal_boxes(allbboxes, image_labinsts, allmasks, am_label, am_instance, am_area, print_info=print_info)
+    bboxes, labels, scores = supress_non_maximal_boxes(allbboxes, image_labinsts, am_label, am_instance, am_bbox, print_info=print_info)
     X, Y = extract_features(image, image_depth, image_hha, image_xyz, bboxes, labels, scores, print_info=print_info)
     if print_plots :
         plot_selected_regions(image, bboxes, Y)
@@ -270,3 +279,12 @@ def get_features_from_filename ( imgnumber, print_plots=False, print_info=False 
         print(f"[INFO] X-> {X.shape} \t Y-> {Y.shape}")
         print(f"[INFO] total time taken {time.time()-tic:.4f} seconds")
     return X, Y
+
+
+def getImagesBasic ( img_name: str, root_dir: str = "../nyudv2" ) :
+    image = np.load(f"{root_dir}/rgb/{img_name}.npy")
+    image_depth = np.load(f"{root_dir}/depth/{img_name}.npy")
+    image_labelmaps = np.load(f"{root_dir}/label/{img_name}.npy")
+    image_instmaps = np.load(f"{root_dir}/instance/{img_name}.npy")
+    image_hha = np.load(f"{root_dir}/hha/{img_name}.npy")
+    return image, image_depth, image_hha, image_labelmaps, image_instmaps
