@@ -50,6 +50,9 @@ def getImages ( img_name: str, root_dir: str = "../nyudv2", print_info: bool = F
     image_instmaps = np.load(f"{root_dir}/instance/{img_name}.npy")
     image_hha = np.load(f"{root_dir}/hha/{img_name}.npy")
 
+    if len(image_depth.shape) > 2 :
+        image_depth = np.mean(image_depth, axis=-1)
+
     image_xyz = np.zeros((image_depth.shape[0], image_depth.shape[1], 3))
     height, width = image_depth.shape
     CX_DEPTH, CY_DEPTH, FX_DEPTH, FY_DEPTH = getCameraParams(isColor=False)
